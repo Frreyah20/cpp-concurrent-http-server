@@ -8,6 +8,10 @@
 #include <unordered_map>
 #include <fstream>
 #include <streambuf>
+#include <thread>
+#include <mutex> 
+
+
 std::string getMimeType(const std::string& path)
 {
     if (path.find(".html") != std::string::npos)
@@ -25,53 +29,16 @@ std::string getMimeType(const std::string& path)
     return "text/plain";
 }
 
-int main() {
+int request_count = 0;
+std::mutex request_mutex;
 
-    int server_fd = socket(AF_INET, SOCK_STREAM, 0);
-    int opt = 1;
-
-setsockopt(
-    server_fd,
-    SOL_SOCKET,
-    SO_REUSEADDR,
-    &opt,
-    sizeof(opt)
-);
-
-    if (server_fd < 0) {
-        std::cerr << "Failed to create socket\n";
-        return 1;
-    }
-
-    sockaddr_in server_addr{};
-
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_addr.s_addr = INADDR_ANY;
-    server_addr.sin_port = htons(8080);
-    if (bind(server_fd, (sockaddr*)&server_addr,sizeof(server_addr)) < 0) {
-
-        perror("bind");
-        close(server_fd);
-        return 1;
-    }
-
-    if (listen(server_fd, 5) < 0) {
-        std::cerr << "Listen failed\n";
-        close(server_fd);
-        return 1;
-    }
-    while (true){
-    std::cout << "Waiting for a client...\n";
-
-    int client_fd = accept(server_fd, nullptr, nullptr);
-
-    if (client_fd < 0) {
-        std::cerr << "Accept failed\n";
-        close(server_fd);
-        return 1;
-    }
-
+void handleClient(int client_fd){
     std::cout << "Client connected!\n";
+    {
+        std::lock_guard<std::mutex> lock(request_mutex);
+        request_count++;
+        std::cout << "Request Count: " << request_count << '\n';
+    }
     char buffer[1024];
 
     int bytes_received = recv(client_fd, buffer,sizeof(buffer) - 1,0);
@@ -169,9 +136,6 @@ while (std::getline(request_stream, line))
             body = "Method Not Supported";
             status_line = "HTTP/1.1 405 Method Not Allowed\r\n";
         }
-        std::cout << "MIME TYPE: "
-          << getMimeType(file_path)
-          << '\n';
         std::string response =
             status_line +
             "Content-Type: " + getMimeType(file_path) + "\r\n"+
@@ -183,6 +147,56 @@ while (std::getline(request_stream, line))
     }
     close(client_fd);
 }
+
+int main() {
+
+    int server_fd = socket(AF_INET, SOCK_STREAM, 0);
+    int opt = 1;
+
+setsockopt(
+    server_fd,
+    SOL_SOCKET,
+    SO_REUSEADDR,
+    &opt,
+    sizeof(opt)
+);
+
+    if (server_fd < 0) {
+        std::cerr << "Failed to create socket\n";
+        return 1;
+    }
+
+    sockaddr_in server_addr{};
+
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_addr.s_addr = INADDR_ANY;
+    server_addr.sin_port = htons(8080);
+    if (bind(server_fd, (sockaddr*)&server_addr,sizeof(server_addr)) < 0) {
+
+        perror("bind");
+        close(server_fd);
+        return 1;
+    }
+
+    if (listen(server_fd, 5) < 0) {
+        std::cerr << "Listen failed\n";
+        close(server_fd);
+        return 1;
+    }
+    while (true){
+    std::cout << "Waiting for a client...\n";
+
+    int client_fd = accept(server_fd, nullptr, nullptr);
+
+    if (client_fd < 0) {
+        std::cerr << "Accept failed\n";
+        close(server_fd);
+        return 1;
+    }
+    std::thread worker(handleClient, client_fd);
+    worker.detach();
+    }
+    
     close(server_fd);
 
     return 0;
