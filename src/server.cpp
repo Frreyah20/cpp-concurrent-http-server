@@ -27,7 +27,6 @@ setsockopt(
     server_addr.sin_family = AF_INET;
     server_addr.sin_addr.s_addr = INADDR_ANY;
     server_addr.sin_port = htons(8080);
-    setsockopt(...SO_REUSEADDR...)
     if (bind(server_fd,
              (sockaddr*)&server_addr,
              sizeof(server_addr)) < 0) {
@@ -42,7 +41,7 @@ setsockopt(
         close(server_fd);
         return 1;
     }
-    
+    while (true){
     std::cout << "Waiting for a client...\n";
 
     int client_fd = accept(server_fd, nullptr, nullptr);
@@ -73,6 +72,7 @@ setsockopt(
         std::cout << "Echo sent back to client\n";
     }
     close(client_fd);
+}
     close(server_fd);
 
     return 0;
