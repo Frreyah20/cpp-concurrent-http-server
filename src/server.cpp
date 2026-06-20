@@ -13,6 +13,7 @@
 #include <queue>
 #include <vector>
 #include <condition_variable>
+#include <functional>
 
 
 std::string getMimeType(const std::string& path)
@@ -37,6 +38,57 @@ std::mutex request_mutex;
 std::queue<int> task_queue;
 std::mutex queue_mutex;
 std::condition_variable queue_cv;
+
+class Router {
+private:
+    std::unordered_map<std::string, std::function<std::string()>> get_routes;
+    std::unordered_map<std::string, std::function<std::string()>> post_routes;
+
+public:
+    std::string route(const std::string &method, const std::string &path)
+    {
+        if(method == "GET")
+        {
+            auto it = get_routes.find(path);
+            if(it != get_routes.end())
+            {
+                return it->second();
+            }
+        }
+        
+        if(method == "POST")
+        {
+            auto it = post_routes.find(path);
+            if(it != post_routes.end())
+            {
+                return it->second();
+            }
+        }
+        return "404 Not Found";
+    }
+    void get(const std::string& path, std::function<std::string()> handler)
+    {
+        get_routes[path] = handler;
+    }
+    void post(const std::string &path, std::function<std::string()>handler)
+    {
+        post_routes[path] = handler;
+    }
+    bool hasRoute(const std::string &method, std::string &path)
+    {
+        if(method == "GET")
+        {
+            return get_routes.find(path) != get_routes.end();
+        }
+        if(method == "POST")
+        {
+            return post_routes.find(path) != post_routes.end();
+        }
+        return false;
+    }
+};
+
+Router router;
 
 void handleClient(int client_fd){
     std::cout << "Client connected!\n";
@@ -101,6 +153,19 @@ while (std::getline(request_stream, line))
         std::cout << "Method: " << method << '\n';
         std::cout << "Path: " << path << '\n';
         std::cout << "Version: " << version << '\n';
+        if(router.hasRoute(method, path))
+        {
+            std::string body = router.route(method, path);
+            std::string response = "HTTP/1.1 200 OK\r\n"
+            "Content-Type: text/plain\r\r"
+            "Content-Length: " + 
+            std::to_string(body.size()) +
+            "\r\n\r\n" +
+            body;
+            send(client_fd, response.c_str(), response.size(), 0);
+            close(client_fd);
+            return;
+        }
         std::string body;
         std::string status_line;
         std::string file_path;
@@ -205,6 +270,16 @@ setsockopt(
         close(server_fd);
         return 1;
     }
+
+    router.get("/", [](){return "Home Page";});
+    router.get("/about", [](){return "About Page";});
+    router.post("/api/data", [](){return "Data Received";});
+    router.get("/contact", [](){return "Contact Page";});
+
+    std::cout<<router.route("GET", "/") << '\n';
+    std::cout<<router.route("GET", "/about") << '\n';
+    std::cout<<router.route("POST", "/api/data") << '\n';
+
     const int NUM_WORKERS = 4;
     std::vector<std::thread> workers;
     for(int i = 0; i < NUM_WORKERS; i++)
