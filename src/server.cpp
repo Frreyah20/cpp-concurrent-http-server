@@ -17,6 +17,7 @@
 #include <ctime>
 #include <iomanip>
 #include <chrono>
+#include <atomic>
 
 
 std::string getMimeType(const std::string& path)
@@ -82,9 +83,9 @@ bool loadConfig(const std::string& filename)
 
 struct Metrics
 {
-    int requests_served = 0;
-    int active_connections = 0;
-    int errors = 0;
+    std::atomic<int> requests_served{0};
+    std::atomic<int> active_connections{0};
+    std::atomic<int> errors{0};
     double total_latency_ms = 0.0;
     std::chrono::steady_clock::time_point start_time;
     
@@ -190,10 +191,9 @@ Logger logger;
 
 void handleClient(int client_fd){  
     {
-        std::lock_guard<std::mutex> lock(metrics_mutex);
         metrics.active_connections++;
     }    
-    std::cout << "Client connected!\n";
+    //std::cout << "Client connected!\n";
     char buffer[1024];
 
     int bytes_received = recv(client_fd, buffer,sizeof(buffer) - 1,0);
@@ -242,11 +242,12 @@ while (std::getline(request_stream, line))
         headers[key] = value;
     }
 }
-
+        /*
         for (const auto& [key, value] : headers)
         {
             std::cout << key << " -> " << value << '\n';
         }
+        */
 
         //std::cout << "Method: " << method << '\n';
         //std::cout << "Path: " << path << '\n';
@@ -272,7 +273,7 @@ while (std::getline(request_stream, line))
                 
             }
             double error_rate = 100.0 * metrics.errors / metrics.requests_served;
-            std::cout << "Requests: "
+            /*std::cout << "Requests: "
             <<metrics.requests_served
             <<" Active: "
             <<metrics.active_connections
@@ -281,6 +282,7 @@ while (std::getline(request_stream, line))
             <<" Error Rate: "
             <<error_rate
             <<"%\n";
+            */
             close(client_fd);
             if(metrics.requests_served > 0)
             {
@@ -289,8 +291,10 @@ while (std::getline(request_stream, line))
                 double uptime_seconds = std::chrono::duration<double>(now - metrics.start_time).count();
                 double throughput = metrics.requests_served/uptime_seconds;
                 
-                std::cout << "Average Latency: " << avg_latency << " ms\n";
-                std::cout << "Throughput: " << throughput << " req/s\n";            }
+                //std::cout << "Average Latency: " << avg_latency << " ms\n";
+                //std::cout << "Throughput: " << throughput << " req/s\n";            
+            
+            }
             return;
         }
         std::string body;
@@ -316,9 +320,8 @@ while (std::getline(request_stream, line))
                 status_line = "HTTP/1.1 404 Not Found\r\n";
                 status_code = 404;
                 {
-                    std::lock_guard<std::mutex> lock(metrics_mutex);
                     metrics.errors++;
-                }
+                } 
             }
             else
             {
@@ -366,7 +369,7 @@ while (std::getline(request_stream, line))
     }
         double error_rate = 100.0 * metrics.errors / metrics.requests_served;
     
-    std::cout 
+    /*std::cout 
         <<"Request: "
         <<metrics.requests_served
         <<" Active: "
@@ -376,17 +379,19 @@ while (std::getline(request_stream, line))
         <<" Error Rate: "
         <<error_rate
         <<"%\n";
+    */
     if(metrics.requests_served > 0)
         {
             double avg_latency = metrics.total_latency_ms / metrics.requests_served;
             auto now = std::chrono::steady_clock::now();
             double uptime_seconds = std::chrono::duration<double>(now - metrics.start_time).count();
             double throughput = metrics.requests_served/uptime_seconds;
-            std::cout << "Average Latency: " << avg_latency << " ms\n";
-            std::cout << "Throughput: " << throughput << " req/s\n";
+            //std::cout << "Average Latency: " << avg_latency << " ms\n";
+            //std::cout << "Throughput: " << throughput << " req/s\n";
             
         }
     close(client_fd);
+
 }
 
 void workerThread()
