@@ -17,7 +17,9 @@
 #include <ctime>
 #include <iomanip>
 #include <chrono>
+#include <csignal>
 #include <atomic>
+
 
 
 std::string getMimeType(const std::string& path)
@@ -40,6 +42,8 @@ std::string getMimeType(const std::string& path)
 std::queue<int> task_queue;
 std::mutex queue_mutex;
 std::condition_variable queue_cv;
+std::atomic<bool> running(true);
+int server_fd;
 
 struct Config
 {
@@ -396,13 +400,17 @@ while (std::getline(request_stream, line))
 
 void workerThread()
 {
-    while(true)
+    while(running)
     {
         int client_fd;
         std::unique_lock<std::mutex> lock(queue_mutex);
         queue_cv.wait(lock, []{
-            return !task_queue.empty();
+            return !task_queue.empty() || !running;
         });
+        if(!running && task_queue.empty())
+        {
+            return; 
+        }
         client_fd = task_queue.front();
         task_queue.pop();
         lock.unlock();
@@ -411,8 +419,16 @@ void workerThread()
     }
 }
 
+void signalHandler(int signal)
+{
+    std::cout << "\nShutdown Signal received..\n";
+    running = false;
+    close(server_fd);
+    queue_cv.notify_all();
+}
 
 int main() {
+    signal(SIGINT, signalHandler);
     if (!loadConfig("../config.txt"))
     {
         std::cerr << "Failed to load config\n";
@@ -423,7 +439,7 @@ int main() {
     std::cout << "Workers: " << config.workers << '\n';
     std::cout << "Root: " << config.root << '\n';
 
-    int server_fd = socket(AF_INET, SOCK_STREAM, 0);
+    server_fd = socket(AF_INET, SOCK_STREAM, 0);
     int opt = 1;
 
     setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
@@ -469,15 +485,16 @@ int main() {
     logger.info("Server started");
     logger.warning("Test warning");
     logger.error("Test error");
-    while (true){
+    while (running){
     std::cout << "Waiting for a client...\n";
 
     int client_fd = accept(server_fd, nullptr, nullptr);
 
     if (client_fd < 0) {
+        if(!running)
+            break;
         std::cerr << "Accept failed\n";
-        close(server_fd);
-        return 1;
+        continue;
     }
     {
         std::lock_guard<std::mutex> lock(queue_mutex);
@@ -485,6 +502,13 @@ int main() {
     }
     queue_cv.notify_one();
     }
+    queue_cv.notify_all();
+    std::cout << "Joining worker thread...\n";
+    for(auto &worker : workers)
+    {
+        worker.join();
+    }
+    std::cout << "Shutdown complete.\n";
     
     close(server_fd);
 

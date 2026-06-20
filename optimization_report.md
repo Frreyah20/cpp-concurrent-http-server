@@ -119,3 +119,24 @@ The server is not significantly limited by metrics counter synchronization.
 The primary bottleneck lies elsewhere, likely networking and request handling overhead.
 
 Attempted perf-based profiling, but the profiling package was unavailable in the WSL environment. CPU analysis was performed using top -H.
+
+# Graceful Shutdown
+
+Implemented SIGINT (Ctrl+C) handling.
+
+Features:
+- Stops accepting new connections.
+- Closes listening socket.
+- Wakes sleeping worker threads.
+- Allows active requests to complete.
+- Joins all worker threads before exit.
+
+Shutdown Flow:
+
+Ctrl+C
+→ Signal Handler
+→ Stop Accept Loop
+→ Close Socket
+→ Notify Workers
+→ Join Threads
+→ Clean Exit
