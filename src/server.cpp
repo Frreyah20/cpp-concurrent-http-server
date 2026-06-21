@@ -19,6 +19,9 @@
 #include <chrono>
 #include <csignal>
 #include <atomic>
+#include <algorithm>
+#include <cctype>
+
 
 
 
@@ -194,59 +197,112 @@ Router router;
 Logger logger;
 
 void handleClient(int client_fd){  
+
     {
+        std::lock_guard<std::mutex> lock(metrics_mutex);
         metrics.active_connections++;
     }    
     //std::cout << "Client connected!\n";
-    char buffer[1024];
-
-    int bytes_received = recv(client_fd, buffer,sizeof(buffer) - 1,0);
-    auto start_time = std::chrono::steady_clock::now();
-
-    if (bytes_received < 0) {
-        std::cerr << "Receive failed\n";
-    }
-    else {
-        buffer[bytes_received] = '\0';
-
-        //std::cout << "\n===== REQUEST =====\n";
-        //std::cout << buffer;
-        //std::cout << "\n===================\n";
-        std::istringstream request_stream(buffer);
-
-        std::string method;
-        std::string path;
-        std::string version;
-
-        request_stream >> method >> path >> version;
-        std::unordered_map<std::string, std::string> headers;
-
-std::string line;
-
-std::getline(request_stream, line);
-
-while (std::getline(request_stream, line))
-{
-    if (line == "\r" || line.empty())
-        break;
-
-    size_t colon = line.find(':');
-
-    if (colon != std::string::npos)
+    struct timeval timeout;
+    timeout.tv_sec = 30;
+    timeout.tv_usec = 0;
+    setsockopt(client_fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    while(true)
     {
-        std::string key = line.substr(0, colon);
-        std::string value = line.substr(colon + 1);
+    std::string request;
 
-        if (!value.empty() && value[0] == ' ')
-            value.erase(0, 1);
+while(request.find("\r\n\r\n") == std::string::npos)
+{
+    char buffer[4096];
 
-        if (!value.empty() && value.back() == '\r')
-            value.pop_back();
+    int bytes_received =
+        recv(client_fd,
+             buffer,
+             sizeof(buffer),
+             0);
 
-        headers[key] = value;
+    if(bytes_received <= 0)
+    {
+        request.clear();
+        break;
     }
+
+    request.append(buffer, bytes_received);
+    std::cout << "Received " << bytes_received << " bytes\n";
+    size_t count = 0;
+    size_t pos = 0;
+    while((pos = request.find("\r\n\r\n", pos)) != std::string::npos)
+    {
+        count++;
+        pos+=4;
+    }
+    std::cout << "Requests in buffer: " << count << "\n";
 }
+
+if(request.empty())
+{
+    break;
+}
+
+auto start_time = std::chrono::steady_clock::now();
+
+std::istringstream request_stream(request);
+std::cout << "\n===== REQUEST =====\n";
+std::cout << request;
+std::cout << "\n===================\n";
+
+    std::string method;
+    std::string path;
+    std::string version;
+
+    request_stream >> method >> path >> version;
+    std::unordered_map<std::string, std::string> headers;
+
+    std::string line;
+    std::getline(request_stream, line);
+    while (std::getline(request_stream, line))
+    {
+        if (line == "\r" || line.empty())
+        {
+            break;
+        }
+        size_t colon = line.find(':');
+        if (colon != std::string::npos)
+        {
+            std::string key = line.substr(0, colon);
+            std::string value = line.substr(colon + 1);
+
+            if (!value.empty() && value[0] == ' ')
+                value.erase(0, 1);
+
+            if (!value.empty() && value.back() == '\r')
+                value.pop_back();
+
+            headers[key] = value;
+        }
+    }
+    bool keep_alive = true;
+    if(version == "HTTP/1.0")
+    {
+        keep_alive = false;
+    }
+    if(headers.count("Connection"))
+    {
+        std::string connection = headers["Connection"];
+        std::transform(connection.begin(), connection.end(), connection.begin(), ::tolower);
+        if(connection == "close")
+        {
+            keep_alive = false;
+        }
+        if(connection == "keep-alive")
+        {
+            keep_alive = true;
+        }
+    }
+    
+
         /*
+        std::cout << "Keep-Alive: " << keep_alive << '\n';
         for (const auto& [key, value] : headers)
         {
             std::cout << key << " -> " << value << '\n';
@@ -256,27 +312,29 @@ while (std::getline(request_stream, line))
         //std::cout << "Method: " << method << '\n';
         //std::cout << "Path: " << path << '\n';
         //std::cout << "Version: " << version << '\n';
-        logger.info(method + " " + path);
-        if(router.hasRoute(method, path))
+    logger.info(method + " " + path);
+    if(router.hasRoute(method, path))
+    {
+        std::string body = router.route(method, path);
+        std::string connection_header = keep_alive ? 
+        "Connection: keep-alive\r\n":
+        "Connection: close\r\n";
+        std::string response = std::string("HTTP/1.1 200 OK\r\n") + 
+        "Content-Type: text/plain\r\n" +  
+        connection_header +
+        "Content-Length: " + 
+        std::to_string(body.size()) +
+        "\r\n\r\n" +
+        body;
+        send(client_fd, response.c_str(), response.size(), 0);
+        auto end_time = std::chrono::steady_clock::now();
+        double latency_ms = std::chrono::duration<double, std::milli> (end_time - start_time).count();
         {
-            std::string body = router.route(method, path);
-            std::string response = "HTTP/1.1 200 OK\r\n"
-            "Content-Type: text/plain\r\n" 
-            "Content-Length: " + 
-            std::to_string(body.size()) +
-            "\r\n\r\n" +
-            body;
-            send(client_fd, response.c_str(), response.size(), 0);
-            auto end_time = std::chrono::steady_clock::now();
-            double latency_ms = std::chrono::duration<double, std::milli> (end_time - start_time).count();
-            {
-                std::lock_guard<std::mutex> lock(metrics_mutex);
-                metrics.requests_served++;
-                metrics.active_connections--;
-                metrics.total_latency_ms += latency_ms;
-                
-            }
-            double error_rate = 100.0 * metrics.errors / metrics.requests_served;
+            std::lock_guard<std::mutex> lock(metrics_mutex);
+            metrics.requests_served++;
+            metrics.total_latency_ms += latency_ms;
+        }
+        double error_rate = 100.0 * metrics.errors / metrics.requests_served;
             /*std::cout << "Requests: "
             <<metrics.requests_served
             <<" Active: "
@@ -287,20 +345,23 @@ while (std::getline(request_stream, line))
             <<error_rate
             <<"%\n";
             */
-            close(client_fd);
-            if(metrics.requests_served > 0)
-            {
-                double avg_latency = metrics.total_latency_ms / metrics.requests_served;
-                auto now = std::chrono::steady_clock::now();
-                double uptime_seconds = std::chrono::duration<double>(now - metrics.start_time).count();
-                double throughput = metrics.requests_served/uptime_seconds;
-                
+            //close(client_fd);
+        if(metrics.requests_served > 0)
+        {
+            double avg_latency = metrics.total_latency_ms / metrics.requests_served;
+            auto now = std::chrono::steady_clock::now();
+            double uptime_seconds = std::chrono::duration<double>(now - metrics.start_time).count();
+            double throughput = metrics.requests_served/uptime_seconds;
                 //std::cout << "Average Latency: " << avg_latency << " ms\n";
                 //std::cout << "Throughput: " << throughput << " req/s\n";            
             
-            }
-            return;
         }
+        if(!keep_alive)
+        {
+            break;
+        }
+        continue;
+    }
         std::string body;
         std::string status_line;
         std::string file_path;
@@ -352,54 +413,39 @@ while (std::getline(request_stream, line))
                 metrics.errors++;
             }
         }
-        logger.info(method + " " + path + " -> " + std::to_string(status_code));
-        std::string response =
-            status_line +
-            "Content-Type: " + getMimeType(file_path) + "\r\n"+
+        std::string connection_header = keep_alive ? 
+            "Connection: keep-alive\r\n" : 
+            "Connection: close\r\n";
+        std::string response = status_line +
+            "Content-Type: "+ getMimeType(file_path) + "\r\n" +
+            connection_header +
             "Content-Length: " +
-            std::to_string(body.size()) +
-            "\r\n\r\n" +
+            std::to_string(body.size()) + 
+            "\r\n\r\n" + 
             body;
-            
-        send(client_fd, response.c_str(), response.size(),0);
-    }
-    auto end_time = std::chrono::steady_clock::now();
-    double latency_ms = std::chrono::duration<double, std::milli> (end_time - start_time).count();
-    {
-        std::lock_guard<std::mutex> lock(metrics_mutex);
-        metrics.requests_served++;
-        metrics.active_connections--;
-        metrics.total_latency_ms+=latency_ms;
-    }
-        double error_rate = 100.0 * metrics.errors / metrics.requests_served;
-    
-    /*std::cout 
-        <<"Request: "
-        <<metrics.requests_served
-        <<" Active: "
-        <<metrics.active_connections
-        <<" Errors: "
-        <<metrics.errors
-        <<" Error Rate: "
-        <<error_rate
-        <<"%\n";
-    */
-    if(metrics.requests_served > 0)
+        send(client_fd, response.c_str(), response.size(), 0); 
+        auto end_time = std::chrono::steady_clock::now();
+        double latency_ms = std::chrono::duration<double, std::milli> (end_time - start_time).count();
         {
-            double avg_latency = metrics.total_latency_ms / metrics.requests_served;
-            auto now = std::chrono::steady_clock::now();
-            double uptime_seconds = std::chrono::duration<double>(now - metrics.start_time).count();
-            double throughput = metrics.requests_served/uptime_seconds;
-            //std::cout << "Average Latency: " << avg_latency << " ms\n";
-            //std::cout << "Throughput: " << throughput << " req/s\n";
-            
+            std::lock_guard<std::mutex> lock(metrics_mutex);
+            metrics.requests_served++;
+            metrics.total_latency_ms += latency_ms;
         }
-    close(client_fd);
-
+        if(!keep_alive)
+        {
+            break;
+        }
+   }
+   {
+    std::lock_guard<std::mutex> lock(metrics_mutex);
+    metrics.active_connections--;
+   }
+   close(client_fd);
 }
 
 void workerThread()
 {
+    //std::cout << "Worker Thread Started\n";
     while(running)
     {
         int client_fd;
@@ -409,12 +455,13 @@ void workerThread()
         });
         if(!running && task_queue.empty())
         {
+            //std::cout << "Worker exiting\n";
             return; 
         }
         client_fd = task_queue.front();
         task_queue.pop();
         lock.unlock();
-        std::cout << "Worker picked up a task\n";
+        //std::cout << "Worker picked up a task\n";
         handleClient(client_fd);
     }
 }
@@ -503,12 +550,13 @@ int main() {
     queue_cv.notify_one();
     }
     queue_cv.notify_all();
-    std::cout << "Joining worker thread...\n";
+    //std::cout << "Joining worker thread...\n";
     for(auto &worker : workers)
     {
         worker.join();
+        //std::cout << "Worker joined\n";
     }
-    std::cout << "Shutdown complete.\n";
+    //std::cout << "Shutdown complete.\n";
     
     close(server_fd);
 
