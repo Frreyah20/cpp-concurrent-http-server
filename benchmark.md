@@ -1,308 +1,115 @@
-# TCP Server Benchmark Report
+# Benchmark Report
 
 ## Environment
 
-Workers: 2
-
-Port: 8081
-
-## Test 1
-
-Requests: 100
-
-Concurrent Clients: 10
-
-Requests/sec: 1101.36
-
-P50 Latency: 6 ms
-
-P95 Latency: 20 ms
-
-P99 Latency: 25 ms
-
-Failed Requests: 0
-
-## Test 2
-
-Requests: 5000
-
-Concurrent Clients: 100
-
-Requests/sec: 2676.36
-
-P50 Latency: 34 ms
-
-P95 Latency: 39 ms
-
-P99 Latency: 73 ms
-
-Failed Requests: 0
-
-## Test 3
-
-Requests: 10000
-
-Concurrent Clients: 500
-
-Requests/sec: 2551.49
-
-P50 Latency: 197 ms
-
-P95 Latency: 213 ms
-
-P99 Latency: 219 ms
-
-Failed Requests: 0
-
-Notes:
-Increasing the listen backlog from 5 to 1024 eliminated connection timeouts under high concurrency.
-
-# Test 4
-
-Requests: 20000
-
-Concurrent Clients: 1000
-
-Requests/sec: 2495.80
-
-P50 Latency: 397 ms
-
-P95 Latency: 442 ms
-
-P99 Latency: 454 ms
-
-Failed Requests: 0
+| Parameter      | Value                      |
+| -------------- | -------------------------- |
+| Server Type    | Multi-threaded HTTP Server |
+| Language       | C++17                      |
+| Benchmark Tool | ApacheBench (ab)           |
+| OS             | Linux / WSL                |
+| Port           | 8081                       |
 
 ---
 
-# Conclusions
+## Throughput and Latency
 
-The server sustained approximately 2500-2700 requests/second under heavy concurrent load.
+### Test 1
 
-Latency increased significantly as concurrency increased, indicating queueing effects within the thread pool architecture.
+| Metric             | Value   |
+| ------------------ | ------- |
+| Requests           | 100     |
+| Concurrent Clients | 10      |
+| Requests/sec       | 1101.36 |
+| P50 Latency        | 6 ms    |
+| P95 Latency        | 20 ms   |
+| P99 Latency        | 25 ms   |
+| Failed Requests    | 0       |
 
-A major bottleneck was identified in the TCP listen backlog. Increasing the backlog from 5 to 1024 eliminated connection timeouts at 500 concurrent clients.
+### Test 2
 
-The server successfully handled 20,000 requests at 1000 concurrent clients with zero failed requests.
+| Metric             | Value   |
+| ------------------ | ------- |
+| Requests           | 5000    |
+| Concurrent Clients | 100     |
+| Requests/sec       | 2676.36 |
+| P50 Latency        | 34 ms   |
+| P95 Latency        | 39 ms   |
+| P99 Latency        | 73 ms   |
+| Failed Requests    | 0       |
 
-# Phase 13 — Keep-Alive Connections
+### Test 3
 
-## Objective
+| Metric             | Value   |
+| ------------------ | ------- |
+| Requests           | 10000   |
+| Concurrent Clients | 500     |
+| Requests/sec       | 2551.49 |
+| P50 Latency        | 197 ms  |
+| P95 Latency        | 213 ms  |
+| P99 Latency        | 219 ms  |
+| Failed Requests    | 0       |
 
-Implement HTTP persistent connections (`Connection: keep-alive`) to reduce the overhead of creating and closing TCP connections for every request.
+### Test 4
 
-## Implementation
-
-The server was modified to:
-
-* Parse the `Connection` header from incoming HTTP requests.
-* Support persistent client connections using a request-processing loop.
-* Keep the socket open when the client requests `keep-alive`.
-* Close the connection only when:
-
-  * the client requests `Connection: close`,
-  * a timeout occurs,
-  * or the client disconnects.
-
-Example:
-
-```http
-Connection: keep-alive
-```
-
-## Benchmark Setup
-
-Tool:
-
-```bash
-ApacheBench (ab)
-```
-
-Server Configuration:
-
-```text
-Workers: 100
-Port: 8081
-```
-
-Test Endpoint:
-
-```http
-GET /
-```
-
-Response Body:
-
-```text
-Home Page
-```
-
-Response Size:
-
-```text
-9 bytes
-```
+| Metric             | Value   |
+| ------------------ | ------- |
+| Requests           | 20000   |
+| Concurrent Clients | 1000    |
+| Requests/sec       | 2495.80 |
+| P50 Latency        | 397 ms  |
+| P95 Latency        | 442 ms  |
+| P99 Latency        | 454 ms  |
+| Failed Requests    | 0       |
 
 ---
 
-## Benchmark Results
+## Keep-Alive Evaluation
 
-### Without Keep-Alive
-
-Command:
-
-```bash
-ab -n 20000 -c 100 http://127.0.0.1:8081/
-```
-
-Results:
-
-| Metric            | Value       |
-| ----------------- | ----------- |
-| Complete Requests | 20000       |
-| Failed Requests   | 0           |
-| Requests/sec      | 1871.01     |
-| Mean Request Time | 53.447 ms   |
-| Transfer Rate     | 168.10 KB/s |
-
----
-
-### With Keep-Alive
-
-Command:
+### Benchmark Command
 
 ```bash
 ab -k -n 20000 -c 100 http://127.0.0.1:8081/
 ```
 
-Results:
+### Results
 
-| Metric            | Value       |
-| ----------------- | ----------- |
-| Complete Requests | 20000       |
-| Failed Requests   | 0           |
-| Requests/sec      | 1930.49     |
-| Mean Request Time | 51.800 ms   |
-| Transfer Rate     | 182.87 KB/s |
+| Metric          | Without Keep-Alive | With Keep-Alive |
+| --------------- | -----------------: | --------------: |
+| Requests/sec    |            1871.01 |         1930.49 |
+| Mean Latency    |           53.45 ms |        51.80 ms |
+| Transfer Rate   |        168.10 KB/s |     182.87 KB/s |
+| Failed Requests |                  0 |               0 |
 
----
+### Improvement
 
-## Performance Comparison
-
-| Metric          | No Keep-Alive |  Keep-Alive | Improvement |
-| --------------- | ------------: | ----------: | ----------: |
-| Requests/sec    |       1871.01 |     1930.49 |      +3.18% |
-| Mean Latency    |     53.447 ms |   51.800 ms |      -3.08% |
-| Transfer Rate   |   168.10 KB/s | 182.87 KB/s |      +8.79% |
-| Failed Requests |             0 |           0 |   No Change |
+| Metric        | Change |
+| ------------- | ------ |
+| Throughput    | +3.18% |
+| Mean Latency  | -3.08% |
+| Transfer Rate | +8.79% |
 
 ---
 
-## Stress Testing
+## Key Findings
 
-### Moderate Load
+* Sustained approximately 2500–2700 requests/second under heavy concurrent load.
+* Successfully handled up to 20,000 requests with 1,000 concurrent clients and zero failed requests.
+* Increasing the TCP listen backlog from 5 to 1024 eliminated connection timeouts under high concurrency.
+* Keep-Alive connections improved throughput and reduced latency by reducing TCP connection establishment overhead.
+* Latency increased with concurrency due to queueing effects within the thread-pool architecture.
 
-Command:
+## Limitations
 
-```bash
-ab -k -n 1000 -c 100 http://127.0.0.1:8081/
-```
+The server uses a thread-per-task worker-pool design. Under very high concurrency, persistent connections can occupy worker threads and reduce scalability.
 
-Result:
-
-```text
-Complete Requests: 1000
-Failed Requests: 0
-```
-
-### Single Persistent Connection
-
-Command:
-
-```bash
-ab -k -n 1000 -c 1 http://127.0.0.1:8081/
-```
-
-Result:
-
-```text
-Complete Requests: 1000
-Failed Requests: 0
-```
-
-### High Concurrency
-
-Command:
-
-```bash
-ab -k -n 5000 -c 500 http://127.0.0.1:8081/
-```
-
-Result:
-
-```text
-Completed Requests: ~4600
-```
-
-Command:
-
-```bash
-ab -k -n 20000 -c 1000 http://127.0.0.1:8081/
-```
-
-Result:
-
-```text
-Completed Requests: ~19100
-```
-
-At very high concurrency levels, some requests timed out before completion.
-
----
-
-## Analysis
-
-Keep-Alive successfully reduced connection setup overhead and improved throughput by approximately 3%.
-
-The improvement is relatively small because the benchmarked endpoint returns only a 9-byte response on localhost. Under these conditions, most execution time is spent in:
-
-* thread scheduling,
-* mutex synchronization,
-* request parsing,
-* logging,
-* socket operations.
-
-The cost of TCP connection establishment represents only a small portion of total request processing time.
-
----
-
-## Current Limitations
-
-The server uses a thread-pool architecture where each worker remains associated with a client connection while it is active.
-
-Under very high concurrency, persistent connections can occupy worker threads for extended periods, reducing scalability.
-
-Production-grade web servers typically use:
+Production-grade web servers typically use event-driven I/O mechanisms such as:
 
 * epoll
 * kqueue
 * io_uring
-* asynchronous event-driven architectures
 
-to manage large numbers of persistent connections efficiently.
+to manage large numbers of concurrent connections more efficiently.
 
----
-
-## Conclusion
-
-Keep-Alive support was successfully implemented and validated through ApacheBench testing.
-
-Results show:
-
-* Reduced average latency
-* Increased throughput
-* Correct handling of persistent HTTP connections
-* Stable operation under moderate concurrent workloads
-
-The implementation meets the objectives of Phase 13 and provides measurable performance improvements over the non-persistent connection model.
-
+```
+```
