@@ -25,7 +25,7 @@
 #include "logger/logger.h"
 #include "router/router.h"
 #include "config/config.h"
-
+#include "threadpool/thread_pool.h"
 
 
 
@@ -417,28 +417,6 @@ std::istringstream request_stream(request);
    close(client_fd);
 }
 
-void workerThread()
-{
-    //std::cout << "Worker Thread Started\n";
-    while(running)
-    {
-        int client_fd;
-        std::unique_lock<std::mutex> lock(queue_mutex);
-        queue_cv.wait(lock, []{
-            return !task_queue.empty() || !running;
-        });
-        if(!running && task_queue.empty())
-        {
-            //std::cout << "Worker exiting\n";
-            return; 
-        }
-        client_fd = task_queue.front();
-        task_queue.pop();
-        lock.unlock();
-        //std::cout << "Worker picked up a task\n";
-        handleClient(client_fd);
-    }
-}
 
 void signalHandler(int signal)
 {

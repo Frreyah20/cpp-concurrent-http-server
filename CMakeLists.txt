@@ -10,4 +10,5 @@ add_executable(server
     src/logger/logger.cpp
     src/router/router.cpp
     src/config/config.cpp
+    src/threadpool/thread_pool.cpp
 )
